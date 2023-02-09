@@ -8,16 +8,22 @@ import com.google.cloud.storage.BlobId;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.FirebaseOptions;
 import com.google.firebase.cloud.FirestoreClient;
+import com.google.firebase.database.utilities.Pair;
 import com.microsoft.azure.functions.annotation.*;
 import com.microsoft.azure.functions.*;
 
 import java.io.*;
 import java.sql.Time;
+import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
 import java.util.concurrent.ExecutionException;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
+
+
 
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.cloud.storage.BlobInfo;
@@ -31,8 +37,10 @@ import com.google.cloud.storage.StorageOptions;
  */
 public class TimerTriggerFunction {
     @FunctionName("timerFunction")
-    public void run(@TimerTrigger(name = "timer", schedule = "0 0 0 * * *") String timerInfo,
+    public void run(@TimerTrigger(name = "timer", schedule = "0/20 * * * * *") String timerInfo,
                     final ExecutionContext context) {
+
+        System.out.println("here");
 
         Timestamp TodaysTime= Timestamp.now();
 
@@ -50,6 +58,7 @@ public class TimerTriggerFunction {
                 "  \"client_x509_cert_url\": \"https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-gaf97%40advanced-analysis-and-design.iam.gserviceaccount.com\"\n" +
                 "}";
         GoogleCredentials credentials;
+        System.out.println("first");
         try {
             credentials = GoogleCredentials.fromStream(new ByteArrayInputStream(jsonString.getBytes()));
         } catch (IOException e) {
@@ -61,11 +70,11 @@ public class TimerTriggerFunction {
 
         FirebaseOptions options = null;
 
-            options = new FirebaseOptions.Builder()
-                    .setCredentials(credentials)
-                    .setDatabaseUrl("https://advanced-analysis-and-design-default-rtdb.europe-west1.firebasedatabase.app")
-                    .build();
-            context.getLogger().info("works");
+        options = new FirebaseOptions.Builder()
+                .setCredentials(credentials)
+                .setDatabaseUrl("https://advanced-analysis-and-design-default-rtdb.europe-west1.firebasedatabase.app")
+                .build();
+        context.getLogger().info("works");
         if(FirebaseApp.getApps().isEmpty()){FirebaseApp.initializeApp(options);}
         Firestore db = FirestoreClient.getFirestore();
 
@@ -154,7 +163,7 @@ public class TimerTriggerFunction {
 
                 }
                 else{
-                   storage.create(BlobInfo.newBuilder(blobId).setContentType("text/plain").build(), out.toByteArray());
+                    storage.create(BlobInfo.newBuilder(blobId).setContentType("text/plain").build(), out.toByteArray());
                     context.getLogger().info("new Data Written to Google Cloud Storage file.");
                 }
 
@@ -177,6 +186,84 @@ public class TimerTriggerFunction {
         }
 
 
+        System.out.println("second");
+        //now the function for delivery reports are created and triggered every sunday
+        Calendar calendar = Calendar.getInstance();
+        int day = calendar.get(Calendar.DAY_OF_WEEK);
+        System.out.println(day);
+        //if calendar is sunday ==0 so before monday
+        if(day==5){
+
+            //cycle through each fridge for barcodes where stock is equal to zero or less than 2
+            for (String Fridge : documentNames) {
+
+
+                CollectionReference fridgecollection = db.collection("Fridges/"+Fridge+"/Items");
+
+                //for each barcode get items where condition met
+                Query query=fridgecollection.whereLessThanOrEqualTo("Quantity",3);
+                System.out.println(Fridge);
+
+                QuerySnapshot querySnapshot = null;
+                try {
+                    querySnapshot = query.get().get();
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                } catch (ExecutionException e) {
+                    throw new RuntimeException(e);
+                }
+                HashMap<String, Pair<String,Integer>> valuesMap = new HashMap<>();
+                for (DocumentSnapshot document : querySnapshot.getDocuments()) {
+
+                    String key = document.getId();
+                    //int value = ((Long) document.get("Quantity")).intValue();
+                    Pair<String,Integer> value=new Pair<>(document.getString("Name"),((Long) document.get("Quantity")).intValue());
+                    valuesMap.put(key,value);
+                }
+
+                Storage storage = StorageOptions.newBuilder().setCredentials(credentials).build().getService();
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                String s="List of Items to reorder"+ TodaysTime+"\n";
+                try {
+                    out.write(s.getBytes());
+
+                    for (HashMap.Entry<String, Pair<String,Integer>> entry : valuesMap.entrySet()) {
+                        String r;
+                        r= "Barcode: "+entry.getKey()+"Product Name: "+entry.getValue().getFirst()+" CurrentStock: "+entry.getValue().getSecond()+"\n";
+                        out.write(r.getBytes());
+                    }
+
+                    // Get existing data from file
+                    BlobId blobId = BlobId.of("advanced-analysis-and-design.appspot.com", "OrderDocument/"+Fridge);
+                    Blob blob = storage.get(blobId);
+                    // Check if the Blob exists
+                    if(blob != null){
+                        // Overwrite the existing file
+                        System.out.println("here 1");
+                        BlobInfo blobInfo = BlobInfo.newBuilder(blobId).setContentType("text/plain").build();
+                        storage.create(blobInfo, out.toByteArray());
+                        context.getLogger().info("Existing file overwritten with new data.");
+                    } else {
+                        // Create a new file
+                        System.out.println("here");
+                        storage.create(BlobInfo.newBuilder(blobId).setContentType("text/plain").build(), out.toByteArray());
+                        context.getLogger().info("New file created and written to Google Cloud Storage.");
+                    }
+
+
+
+
+
+
+                    //BlobInfo blobInfo = storage.update(BlobInfo.newBuilder("Reports", Fridge).build(), out.toByteArray());
+
+                    //context.getLogger().info("Data written to Google Cloud Storage: " + blobInfo.getSelfLink());
+
+
+
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
 
 
 
@@ -184,6 +271,18 @@ public class TimerTriggerFunction {
 
 
 
-        context.getLogger().info("Hello World!");
+
+            }
+        }
+
+
+
+
+
+
+
+
     }
+
+
 }
