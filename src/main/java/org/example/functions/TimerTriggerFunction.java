@@ -37,7 +37,7 @@ import com.google.cloud.storage.StorageOptions;
  */
 public class TimerTriggerFunction {
     @FunctionName("timerFunction")
-    public void run(@TimerTrigger(name = "timer", schedule = "0/20 * * * * *") String timerInfo,
+    public void run(@TimerTrigger(name = "timer", schedule = "0 0 0 * * *") String timerInfo,
                     final ExecutionContext context) {
 
         System.out.println("here");
